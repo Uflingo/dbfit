@@ -83,7 +83,10 @@ subprojects {
         include('**/*Support*')
     }
 
-    task integrationTest(type: Test) {
+    task dbConnectionProperties {
+    }
+
+    task integrationTest(type: Test, dependsOn: dbConnectionProperties) {
         testClassesDirs = sourceSets.integrationTest.output.classesDirs
         classpath = sourceSets.integrationTest.runtimeClasspath
         classpath += sourceSets.main.runtimeClasspath
@@ -101,8 +104,16 @@ subprojects {
                 password: password,
                 dir: dir,
                 delimiterType: delimiterType,
-                delimiter: delimiter
-        )
+                delimiter: delimiter)
+    }
+
+    ext.createTestDbObjects = {
+        dbdeploy(dbConnectionProperties.jdbcDriverClass,
+            dbConnectionProperties.jdbcUrl,
+            connectionProperties.userName,
+            connectionProperties.passWord,
+            dbConnectionProperties.delimiterType,
+            dbConnectionProperties.delimiter)
     }
 
     ext.sql = {
@@ -116,8 +127,7 @@ subprojects {
                 delimiterType: delimiterType,
                 delimiter: delimiter,
                 autocommit: autocommit,
-                src: sourceFile
-        )
+                src: sourceFile)
     }
 
     ext.copyProperties = {
@@ -142,6 +152,58 @@ subprojects {
             project.connectionPropertiesFiles.each { file ->
                 copyProperties new File(project.projectDir, file), destination
             }
+    }
+
+    task connectionProperties {
+        doLast {
+            copyConnectionProperties '.'
+            def props = new Properties()
+            file(connectionPropertiesFile).withInputStream { props.load(it) }
+
+            ext {
+                userName = props.getProperty('username')
+                passWord = props.getProperty('password')
+                adminUserName = props.getProperty('admin-username')
+                if (adminUserName == '' || adminUserName == null) {
+                    adminUserName = userName
+                    adminPassWord = passWord
+                } else {
+                    adminPassWord = props.getProperty('admin-password')
+                }
+                service = props.getProperty('service')
+                database = props.getProperty('database')
+                adminDatabase = props.getProperty('admin-database')
+                if (adminDatabase == '' || adminDatabase == null) {
+                    adminDatabase = database
+                }
+            }
+        }
+    }
+
+    ext.execSqlScriptTestDatabase = {
+        scriptFile ->
+        sql(dbConnectionProperties.jdbcDriverClass,
+            dbConnectionProperties.adminJdbcUrl,
+            connectionProperties.adminUserName,
+            connectionProperties.adminPassWord,
+            scriptFile,
+            dbConnectionProperties.delimiterType,
+            dbConnectionProperties.delimiter,
+            dbConnectionProperties.autoCommit)
+    }
+
+    task setUpTestDatabase(dependsOn: dbConnectionProperties) {
+        doLast {
+            execSqlScriptTestDatabase(
+                dbConnectionProperties.setUpTestDbScript)
+        }
+    }
+
+    task tearDownTestDatabase(dependsOn: dbConnectionProperties) {
+        doLast {
+            execSqlScriptTestDatabase(
+                dbConnectionProperties.tearDownTestDbScript)
+        }
     }
 
     integrationTest.inputs.dir file("$projectDir/../../FitNesseRoot/DbFit/AcceptanceTests/JavaTests")
@@ -293,6 +355,28 @@ project('teradata') {
         runtime 'com.teradata:terajdbc4:15.0.0.15@jar'
         runtime 'com.teradata:tdgssconfig:15.0.0.15@jar'
     }
+
+    ext.connectionPropertiesFile = 'TestDbConnectionDbFitTeradata.properties'
+    ext.connectionPropertiesFiles = [connectionPropertiesFile]
+
+    dbConnectionProperties.dependsOn connectionProperties
+
+    dbConnectionProperties.doLast {
+        ext {
+            jdbcDriverClass = 'com.teradata.jdbc.TeraDriver'
+            jdbcUrlPrefix = 'jdbc:teradata://'
+            delimiterType = 'row'
+            delimiter = ';'
+            autoCommit = true
+            jdbcUrlWithOptions = jdbcUrlPrefix + connectionProperties.service + '/TMODE=TERA,DATABASE='
+            jdbcUrl = jdbcUrlWithOptions + connectionProperties.database
+            adminJdbcUrl = jdbcUrlWithOptions + connectionProperties.adminDatabase
+            setUpTestDbScript = "${rootProject.projectDir}/test_vm/scripts/teradata/sql/create-databases-teradata.sql"
+            tearDownTestDbScript = "${rootProject.projectDir}/test_vm/scripts/teradata/sql/drop-databases-teradata.sql"
+        }
+    }
+
+    integrationTest.doFirst createTestDbObjects
 }
 
 project('netezza') {
@@ -306,62 +390,24 @@ project('netezza') {
     ext.connectionPropertiesFile = 'TestDbConnectionDbFitNetezza.properties'
     ext.connectionPropertiesFiles = [connectionPropertiesFile]
 
-    task connectionProperties {
-        doLast {
-            copyConnectionProperties '.'
-            def props = new Properties()
-            file(connectionPropertiesFile).withInputStream { props.load(it) }
-            def propService = props.getProperty('service')
-            def propServiceParts = propService.tokenize(':')
-            def propServiceHost = propServiceParts[0]
-            def propServicePort = propServiceParts[1]
-            def propDatabase = props.getProperty('database')
+    dbConnectionProperties.dependsOn connectionProperties
 
-            ext {
-                jdbcDriverClass = 'org.netezza.Driver'
-                jdbcUrlPrefix = 'jdbc:netezza://'
-                delimiterType = 'row'
-                userName = props.getProperty('username')
-                passWord = props.getProperty('password')
-                database = propDatabase.isEmpty() ? "" : ('/' + propDatabase)
-                jdbcUrl = jdbcUrlPrefix + propServiceHost + (propServicePort.isEmpty() ? (':' + propServicePort) : '')
-            }
+    dbConnectionProperties.doLast {
+        ext {
+            jdbcDriverClass = 'org.netezza.Driver'
+            jdbcUrlPrefix = 'jdbc:netezza://'
+            delimiterType = 'row'
+            delimiter = ';'
+            autoCommit = true
+            jdbcUrlWithOptions = jdbcUrlPrefix + connectionProperties.service + '/'
+            jdbcUrl = jdbcUrlWithOptions + connectionProperties.database
+            adminJdbcUrl = jdbcUrlWithOptions + connectionProperties.adminDatabase
+            setUpTestDbScript = "${rootProject.projectDir}/test_vm/scripts/netezza/sql/create-databases-netezza.sql"
+            tearDownTestDbScript = "${rootProject.projectDir}/test_vm/scripts/netezza/sql/drop-databases-netezza.sql"
         }
     }
 
-    integrationTest.dependsOn connectionProperties
-
-    integrationTest.doFirst {
-        dbdeploy(connectionProperties.jdbcDriverClass,
-            connectionProperties.jdbcUrl + connectionProperties.database,
-            connectionProperties.userName,
-            connectionProperties.passWord,
-            connectionProperties.delimiterType)
-    }
-
-    ext.execSqlScriptTestDatabase = {
-        scriptFile ->
-        sql(connectionProperties.jdbcDriverClass,
-            connectionProperties.jdbcUrl + '/system',
-            connectionProperties.userName,
-            connectionProperties.passWord,
-            scriptFile,
-            connectionProperties.delimiterType, ';', true)
-    }
-
-    task setUpTestDatabase(dependsOn: connectionProperties) {
-        doLast {
-            execSqlScriptTestDatabase(
-                "${rootProject.projectDir}/test_vm/scripts/netezza/sql/create-databases-netezza.sql")
-        }
-    }
-
-    task tearDownTestDatabase(dependsOn: connectionProperties) {
-        doLast {
-            execSqlScriptTestDatabase(
-                "${rootProject.projectDir}/test_vm/scripts/netezza/sql/drop-databases-netezza.sql")
-        }
-    }
+    integrationTest.doFirst createTestDbObjects
 }
 
 // Aggregated dependencies to include in the POM file when publishing.
