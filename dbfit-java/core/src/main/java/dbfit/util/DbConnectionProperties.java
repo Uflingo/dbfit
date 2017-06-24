@@ -26,18 +26,28 @@ public class DbConnectionProperties {
             String key = entry.getKey();
             String val = entry.getValue();
 
-            if ("username".equals(key)) {
-                props.Username = val;
-            } else if ("password".equals(key)) {
-                props.Password = val;
-            } else if ("service".equals(key)) {
-                props.Service = val;
-            } else if ("database".equals(key)) {
-                props.DbName = val;
-            } else if ("connection-string".equals(key)) {
-                props.FullConnectionString = val;
-            } else {
-                throw new UnsupportedOperationException(
+            switch (key) {
+                case "username":
+                    props.Username = val;
+                    break;
+                case "password":
+                    props.Password = val;
+                    break;
+                case "service":
+                    props.Service = val;
+                    break;
+                case "database":
+                    props.DbName = val;
+                    break;
+                case "connection-string":
+                    props.FullConnectionString = val;
+                    break;
+                case "admin-username":
+                case "admin-password":
+                case "admin-database":
+                    break;
+                default:
+                    throw new UnsupportedOperationException(
                         "Unsupported key in properties file:" + key);
             }
         }
